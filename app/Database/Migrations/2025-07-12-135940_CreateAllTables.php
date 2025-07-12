@@ -32,7 +32,7 @@ class CreateAllTables extends Migration
             'id_alat'    => ['type' => 'INT', 'unsigned' => true, 'auto_increment' => true],
             'nama_alat'  => ['type' => 'VARCHAR', 'constraint' => 100],
             'harga'      => ['type' => 'INT', 'default' => 0],
-            'id_kategori'=> ['type' => 'INT', 'unsigned' => true],
+            'id_kategori' => ['type' => 'INT', 'unsigned' => true],
             'gambar'     => ['type' => 'VARCHAR', 'constraint' => 255],
             'ukuran'     => ['type' => 'VARCHAR', 'constraint' => 50],
             'warna'      => ['type' => 'VARCHAR', 'constraint' => 100],
@@ -46,7 +46,7 @@ class CreateAllTables extends Migration
         $this->forge->addField([
             'id_trans_alat'    => ['type' => 'INT', 'unsigned' => true, 'auto_increment' => true],
             'id_alat'          => ['type' => 'INT', 'unsigned' => true],
-            'jumlah_trans_alat'=> ['type' => 'INT'],
+            'jumlah_trans_alat' => ['type' => 'INT'],
             'total_harga'      => ['type' => 'DECIMAL', 'constraint' => '10,2'],
             'tgl_trans_alat'   => ['type' => 'DATE'],
             'tgl_est'          => ['type' => 'DATE', 'null' => true],
@@ -70,6 +70,18 @@ class CreateAllTables extends Migration
         $this->forge->addKey('id_pengemb_alat', true);
         $this->forge->addKey('id_trans_alat');
         $this->forge->createTable('pengembalian');
+
+        $this->forge->addField([
+            'id_order' => ['type' => 'INT', 'unsigned' => true, 'auto_increment' => true],
+            'id_user' => ['type' => 'INT', 'unsigned' => true],
+            'id_alat' => ['type' => 'INT', 'unsigned' => true],
+            'jumlah' => ['type' => 'INT'],
+            'total_harga' => ['type' => 'DECIMAL', 'constraint' => '10,2'],
+            'status' => ['type' => "ENUM('Pending','Completed')", 'default' => 'Pending'],
+        ]);
+
+        $this->forge->addKey('id_order', true);
+        $this->forge->createTable('orders');
     }
 
     public function down()
@@ -79,5 +91,6 @@ class CreateAllTables extends Migration
         $this->forge->dropTable('alat');
         $this->forge->dropTable('users');
         $this->forge->dropTable('kategori');
+        $this->forge->dropTable('orders');
     }
 }
