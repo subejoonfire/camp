@@ -6,17 +6,18 @@ use CodeIgniter\RESTful\ResourceController;
 use App\Models\AlatModel;
 use App\Models\TransaksiAlatModel;
 use App\Models\Chatidadmin;
-
+use App\Models\PengembalianOrderModel;
 
 class TelegramController extends ResourceController
 {
     protected $format = 'json';
-    private $url = 'https://283de3c2b381.ngrok-free.app/telegram/webhook';
+    private $url = 'https://cb9ec94764ee.ngrok-free.app/telegram/webhook';
     private $token = '7979273840:AAFr6W3bifNlQF5vkQSM0HUuiFy7au_cFnM';
     private $alatModel;
-    private $transaksiAlatModel;
     private $orderModel;
+    private $transaksiAlatModel;
     private $chatidAdminModel;
+    private $pengembalianOrderModel;
 
     public function __construct()
     {
@@ -24,6 +25,7 @@ class TelegramController extends ResourceController
         $this->alatModel = new AlatModel();
         $this->transaksiAlatModel = new TransaksiAlatModel();
         $this->chatidAdminModel = new Chatidadmin();
+        $this->pengembalianOrderModel = new PengembalianOrderModel();
     }
 
     public function index()
@@ -336,15 +338,31 @@ class TelegramController extends ResourceController
 
     private function handlePengembalian($chatId)
     {
-        $this->sendMessage(
-            $chatId,
-            "Untuk mengembalikan alat, silakan:\n
-        1. Siapkan alat yang akan dikembalikan\n
-        2. Kirim pesan dengan format:\n   
-        KEMBALIKAN_[ID_ALAT]\n\n
-        Contoh: KEMBALIKAN_101"
-        );
+        // Ambil semua pengembalian user berdasarkan chatid
+        $returns = $this->pengembalianOrderModel
+            ->select('pengembalianorder.jumlahpengembalian, orders.id_order, orders.jumlah as total_pesan, orders.tanggal_pesan, orders.tanggal_pengembalian, alat.nama_alat')
+            ->join('orders', 'orders.id_order = pengembalianorder.idorder')
+            ->join('alat', 'alat.id_alat = orders.id_alat')
+            ->where('orders.chatid', $chatId)
+            ->findAll();
+
+        if (empty($returns)) {
+            $this->sendMessage($chatId, "🎉 Anda belum melakukan pengembalian apapun.");
+            return;
+        }
+
+        $message = "📥 Daftar Pengembalian Anda:\n\n";
+        foreach ($returns as $ret) {
+            $message .= "🆔 Order: #{$ret['id_order']}\n";
+            $message .= "📦 Alat: {$ret['nama_alat']}\n";
+            $message .= "🔢 Jumlah Dikembalikan: {$ret['jumlahpengembalian']} / {$ret['total_pesan']}\n";
+            $message .= "📅 Dipesan: " . date('d F Y', strtotime($ret['tanggal_pesan'])) . "\n";
+            $message .= "📅 Est. Kembali: " . date('d F Y', strtotime($ret['tanggal_pengembalian'])) . "\n\n";
+        }
+
+        $this->sendMessage($chatId, $message);
     }
+
 
     private function sendMessage($chatId, $message)
     {
