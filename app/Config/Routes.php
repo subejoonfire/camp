@@ -95,5 +95,9 @@ $routes->get('get-chat-list', 'TelegramController::getChatList');
 $routes->post('send-chat', 'TelegramController::sendChat');
 $routes->get('telegram/webhook', 'TelegramController::webhook');
 $routes->post('telegram/webhook', 'TelegramController::webhook');
-$routes->get('chatlist', 'TelegramController::handleChatIdList');
-$routes->get('adminorder', 'TelegramController::notifyAdminsOrder');
+// $routes->get('chatlist', 'TelegramController::handleChatIdList');
+$routes->get('/pengembalianorder', 'PengembalianAlatOrder::index');
+$routes->post('/pengembalianorder/simpan', 'PengembalianAlatOrder::simpan');
+
+$routes->get('order', 'Order::index');
+$routes->post('order/approve/(:num)', 'Order::approve/$1');
