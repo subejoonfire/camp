@@ -90,8 +90,10 @@ $routes->group('user', static function ($routes) {
 
 $routes->get('telegram', 'TelegramController::index');
 $routes->get('order/(:num)/(:num)/(:num)', 'TelegramController::handleConfirmOrder/$1/$2/$3');
-$routes->post('webhook', 'TelegramController::setWebhook');
+$routes->get('setwebhook', 'TelegramController::setWebhook');
 $routes->get('get-chat-list', 'TelegramController::getChatList');
 $routes->post('send-chat', 'TelegramController::sendChat');
 $routes->get('telegram/webhook', 'TelegramController::webhook');
 $routes->post('telegram/webhook', 'TelegramController::webhook');
+$routes->get('chatlist', 'TelegramController::handleChatIdList');
+$routes->get('adminorder', 'TelegramController::notifyAdminsOrder');

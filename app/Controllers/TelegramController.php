@@ -5,20 +5,25 @@ namespace App\Controllers;
 use CodeIgniter\RESTful\ResourceController;
 use App\Models\AlatModel;
 use App\Models\TransaksiAlatModel;
+use App\Models\Chatidadmin;
+
 
 class TelegramController extends ResourceController
 {
     protected $format = 'json';
+    private $url = 'https://283de3c2b381.ngrok-free.app/telegram/webhook';
     private $token = '7979273840:AAFr6W3bifNlQF5vkQSM0HUuiFy7au_cFnM';
     private $alatModel;
     private $transaksiAlatModel;
     private $orderModel;
+    private $chatidAdminModel;
 
     public function __construct()
     {
         $this->orderModel = new \App\Models\OrderModel();
         $this->alatModel = new AlatModel();
         $this->transaksiAlatModel = new TransaksiAlatModel();
+        $this->chatidAdminModel = new Chatidadmin();
     }
 
     public function index()
@@ -28,7 +33,7 @@ class TelegramController extends ResourceController
 
     public function setWebhook()
     {
-        $apiURL = "https://api.telegram.org/bot{$this->token}/setWebhook?url=" . urlencode('https://5d3574c6e897.ngrok-free.app');
+        $apiURL = "https://api.telegram.org/bot{$this->token}/setWebhook?url=" . urlencode($this->url);
         echo "Setting webhook to: " . $apiURL . "\n";
 
         $response = file_get_contents($apiURL);
@@ -106,10 +111,11 @@ class TelegramController extends ResourceController
     private function handleCommands($chatId, $text)
     {
         $command = strtolower(trim($text));
-        if (preg_match('/^\/?sewa-(\d+)-(\d+)$/', $command, $matches)) {
+        if (preg_match('/^\/?sewa-(\d+)-(\d+)-(\d+)$/', $command, $matches)) {
             $itemId = (int)$matches[1];
             $quantity = (int)$matches[2];
-            $this->handleConfirmOrder($chatId, $itemId, $quantity);
+            $lamaPinjam = (int)$matches[3];
+            $this->handleConfirmOrder($chatId, $itemId, $quantity, $lamaPinjam);
         } elseif ($command === '/selesaisewa') {
             $this->handleSelesaiSewa($chatId);
         } else {
@@ -149,14 +155,49 @@ class TelegramController extends ResourceController
         foreach ($alatTersedia as $alat) {
             $message .= "{$alat['id_alat']}. {$alat['nama_alat']} - Rp" . number_format($alat['harga'], 0, ',', '.') . "/hari (Tersedia: {$alat['jumlah']})\n";
         }
-        $message .= "\nBalas dengan nomor alat yang dipilih dan jumlah yang ingin disewa (contoh: 1 2 untuk 2 alat).";
+        $message .= "\n📌 *Cara menyewa:*\n";
+        $message .= "Gunakan format `/sewa-{id_alat}-{jumlah}`\n";
+        $message .= "Contoh: `/sewa-1-2` untuk menyewa 2 unit alat dengan ID 1.\n";
+        $message .= "\n🛑 Untuk mengakhiri sewa, gunakan perintah /selesaisewa.";
 
         $this->sendMessage($chatId, $message);
     }
-
-    public function handleConfirmOrder($chatId, $itemId, $quantity)
+    private function getTelegramUsername($chatId)
     {
-        $alat = $this->alatModel->find($itemId);
+        $apiURL = "https://api.telegram.org/bot{$this->token}/getChat?chat_id={$chatId}";
+        $response = file_get_contents($apiURL);
+        if ($response) {
+            $data = json_decode($response, true);
+            if (!empty($data['ok']) && isset($data['result']['username'])) {
+                return $data['result']['username'];
+            }
+        }
+        return null;
+    }
+
+    public function handleConfirmOrder($chatId, $itemId, $quantity, $lamaPinjam)
+    {
+        helper('date');
+
+        // Cek apakah chat ID sudah tersimpan
+        $chatModel = new \App\Models\Chatid();
+        $existing = $chatModel->where('chatid', $chatId)->first();
+
+        if (!$existing) {
+            $username = $this->getTelegramUsername($chatId);
+            $chatModel->insert([
+                'chatid' => $chatId,
+                'username' => $username ?? null
+            ]);
+        }
+
+        // Ambil data alat + kategori
+        $alat = $this->alatModel
+            ->select('alat.*, kategori.nama_kategori')
+            ->join('kategori', 'kategori.id_kategori = alat.id_kategori')
+            ->where('alat.id_alat', $itemId)
+            ->first();
+
         if (!$alat) {
             $this->sendMessage($chatId, "Barang dengan ID $itemId tidak ditemukan.");
             return;
@@ -167,41 +208,70 @@ class TelegramController extends ResourceController
             return;
         }
 
-        $total_harga = $alat['harga'] * $quantity;
+        // Hitung total harga: harga * jumlah * hari
+        $total_harga = $alat['harga'] * $quantity * $lamaPinjam;
 
-        // Create order
+        // Hitung tanggal pengembalian
+        $tanggal_pesan = date('Y-m-d');
+        $tanggal_pengembalian = date('Y-m-d', strtotime("+$lamaPinjam days"));
+
+        // Insert order
         $orderData = [
-            'id_user' => 1,
+            'chatid' => $chatId,
             'id_alat' => $itemId,
             'jumlah' => $quantity,
             'total_harga' => $total_harga,
-            'status' => 'Pending'
+            'status' => 'Pending',
+            'tanggal_pesan' => $tanggal_pesan,
+            'tanggal_pengembalian' => $tanggal_pengembalian
         ];
         $this->orderModel->insert($orderData);
 
-        // Update stock
-        $this->alatModel->update($itemId, ['jumlah' => $alat['jumlah'] - $quantity]);
+        // Kurangi stok
+        $this->alatModel->update($itemId, [
+            'jumlah' => $alat['jumlah'] - $quantity
+        ]);
 
-        // Buat pesan spesifikasi alat
-        $pesan = "Pesanan berhasil!\n\n";
-        $pesan .= "Spesifikasi Barang:\n";
-        $pesan .= "Nama: {$alat['nama_alat']}\n";
-        $pesan .= "Kategori: {$alat['id_kategori']}\n"; // Kalau mau nama kategori, harus join dari tabel kategori
-        $pesan .= "Harga per unit: Rp" . number_format($alat['harga'], 0, ',', '.') . "\n";
-        $pesan .= "Ukuran: {$alat['ukuran']}\n";
-        $pesan .= "Warna: {$alat['warna']}\n";
-        $pesan .= "Stok tersisa: " . ($alat['jumlah'] - $quantity) . "\n";
-        $pesan .= "Deskripsi: {$alat['deskripsi']}\n\n";
-        $pesan .= "Jumlah yang dipesan: $quantity\n";
-        $pesan .= "Total harga: Rp" . number_format($total_harga, 0, ',', '.') . "\n\n";
-        $pesan .= "Silakan datang ke toko untuk mengambil barang.";
+        // Kirim pesan
+        $pesan = "✅ Pesanan berhasil!\n\n";
+        $pesan .= "📦 Nama: {$alat['nama_alat']}\n";
+        $pesan .= "📁 Kategori: {$alat['nama_kategori']}\n";
+        $pesan .= "💸 Harga / hari / unit: Rp" . number_format($alat['harga'], 0, ',', '.') . "\n";
+        $pesan .= "🔢 Jumlah: $quantity unit\n";
+        $pesan .= "🗓️ Lama sewa: $lamaPinjam hari\n";
+        $pesan .= "💰 Total: Rp" . number_format($total_harga, 0, ',', '.') . "\n";
+        $pesan .= "📅 Tanggal pengembalian: $tanggal_pengembalian\n";
+        $pesan .= "\nSilakan datang ke toko untuk pengambilan alat.";
 
         $this->sendMessage($chatId, $pesan);
-
-        // Jika kamu mau kirim gambar, dan method sendMessage support foto, bisa ditambahkan seperti ini:
-        // $this->sendPhoto($chatId, $alat['gambar'], $pesan);
+        $this->notifyAdminsOrder($orderData, $alat);
     }
+    public function notifyAdminsOrder($order = null, $alat = null)
+    {
+        $admins = $this->chatidAdminModel->findAll();
+        if (empty($admins)) {
+            return;
+        }
 
+        // Ambil username dari chatid
+        $chatModel = new \App\Models\Chatid();
+        $user = $chatModel->where('chatid', $order['chatid'])->first();
+        $username = $user['username'] ?? '(tanpa username)';
+
+        $message = "📢 <b>Pesanan Baru!</b>\n\n";
+        $message .= "👤 Pelanggan: @$username\n"; // Tambahkan nama pelanggan
+        $message .= "📦 Nama Alat: {$alat['nama_alat']}\n";
+        $message .= "📁 Kategori: {$alat['nama_kategori']}\n";
+        $message .= "🔢 Jumlah: {$order['jumlah']} unit\n";
+        $message .= "🗓️ Lama sewa: " . ((strtotime($order['tanggal_pengembalian']) - strtotime($order['tanggal_pesan'])) / 86400) . " hari\n";
+        $message .= "💰 Total: Rp" . number_format($order['total_harga'], 0, ',', '.') . "\n";
+        $message .= "📅 Tgl Pesan: {$order['tanggal_pesan']}\n";
+        $message .= "📅 Tgl Kembali: {$order['tanggal_pengembalian']}\n";
+
+        foreach ($admins as $admin) {
+            $this->sendMessage($admin['chatid'], $message);
+        }
+    }
 
     public function handleSelesaiSewa($chatId)
     {
@@ -234,30 +304,46 @@ class TelegramController extends ResourceController
         $this->sendMessage($chatId, $message);
     }
 
-    private function handleTransaksi($chatId)
+    public function handleTransaksi($chatId)
     {
-        $riwayatTransaksi = $this->transaksiAlatModel->getTransAlat(); // Ambil data dari model
-
-        if (empty($riwayatTransaksi)) {
-            $this->sendMessage($chatId, "Anda belum memiliki transaksi.");
+        $orders = $this->orderModel
+            ->select('orders.*, alat.nama_alat, kategori.nama_kategori')
+            ->join('alat', 'alat.id_alat = orders.id_alat')
+            ->join('kategori', 'alat.id_kategori = kategori.id_kategori')
+            ->where('orders.chatid', $chatId)
+            ->orderBy('orders.tanggal_pesan', 'DESC')
+            ->findAll();
+        if (empty($orders)) {
+            $this->sendMessage($chatId, "Anda belum memiliki transaksi pemesanan.");
             return;
         }
 
-        $message = "📊 Riwayat Transaksi Anda:\n";
-        foreach ($riwayatTransaksi as $transaksi) {
-            $message .= "🆔 ID: {$transaksi['id_trans_alat']}\n";
-            $message .= "🛠️ Alat: {$transaksi['nama_alat']}\n";
-            $message .= "📅 Tanggal: {$transaksi['tgl_trans_alat']}\n";
-            $message .= "🔄 Status: {$transaksi['status']}\n";
-            $message .= "💰 Total: Rp" . number_format($transaksi['total_harga'], 0, ',', '.') . "\n\n";
+        $message = "📦 Riwayat Pemesanan Anda:\n";
+        foreach ($orders as $order) {
+            $message .= "🆔 ID Order: {$order['id_order']}\n";
+            $message .= "🛠️ Alat: {$order['nama_alat']}\n";
+            $message .= "🛠️ Kategori: {$order['nama_kategori']}\n";
+            $message .= "🔢 Jumlah: {$order['jumlah']}\n";
+            $message .= "💰 Total: Rp" . number_format($order['total_harga'], 0, ',', '.') . "\n";
+            $message .= "📅 Tgl Pesan: {$order['tanggal_pesan']}\n";
+            $message .= "📅 Tgl Kembali: {$order['tanggal_pengembalian']}\n";
+            $message .= "📌 Status: {$order['status']}\n\n";
         }
 
         $this->sendMessage($chatId, $message);
     }
 
+
     private function handlePengembalian($chatId)
     {
-        $this->sendMessage($chatId, "Untuk mengembalikan alat, silakan:\n1. Siapkan alat yang akan dikembalikan\n2. Kirim pesan dengan format:\n   KEMBALIKAN_[ID_ALAT]\n\nContoh: KEMBALIKAN_101");
+        $this->sendMessage(
+            $chatId,
+            "Untuk mengembalikan alat, silakan:\n
+        1. Siapkan alat yang akan dikembalikan\n
+        2. Kirim pesan dengan format:\n   
+        KEMBALIKAN_[ID_ALAT]\n\n
+        Contoh: KEMBALIKAN_101"
+        );
     }
 
     private function sendMessage($chatId, $message)
@@ -279,5 +365,53 @@ class TelegramController extends ResourceController
 
         $context = stream_context_create($options);
         file_get_contents($apiURL, false, $context);
+    }
+    public function handleChatIdList()
+    {
+        $apiURL = "https://api.telegram.org/bot{$this->token}/getUpdates";
+        $response = file_get_contents($apiURL);
+
+        if (!$response) {
+            return $this->response->setJSON([
+                'success' => false,
+                'message' => 'Gagal mengambil data dari Telegram API.'
+            ]);
+        }
+
+        $data = json_decode($response, true);
+
+        if (!isset($data['ok']) || !$data['ok']) {
+            return $this->response->setJSON([
+                'success' => false,
+                'message' => 'Data tidak valid dari Telegram.'
+            ]);
+        }
+
+        $chats = [];
+
+        foreach ($data['result'] as $update) {
+            if (!isset($update['message'])) continue;
+
+            $chat = $update['message']['chat'];
+            $chatId = $chat['id'];
+
+            // Hindari duplikat
+            if (!isset($chats[$chatId])) {
+                $chats[$chatId] = [
+                    'chatid'   => $chatId,
+                    'username' => $chat['username'] ?? '(tanpa username)',
+                    'name'     => $chat['first_name'] ?? '' . ' ' . ($chat['last_name'] ?? ''),
+                ];
+            }
+        }
+
+        // Reset index array agar rapi
+        $chatList = array_values($chats);
+
+        return $this->response->setJSON([
+            'success' => true,
+            'count'   => count($chatList),
+            'data'    => $chatList
+        ]);
     }
 }

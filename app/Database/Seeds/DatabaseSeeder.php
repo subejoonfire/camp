@@ -19,43 +19,69 @@ class DatabaseSeeder extends Seeder
         // alat
         $this->db->table('alat')->insertBatch([
             [
-                'id_alat' => 12, 'nama_alat' => 'Nesting', 'harga' => 20000, 'id_kategori' => 2,
-                'gambar' => 'default_image.jpg', 'ukuran' => 'Besar', 'warna' => 'Silver',
-                'jumlah' => 30, 'deskripsi' => 'Full set untuk penyewaan, berbahan dasar titanium'
+                'id_alat' => 12,
+                'nama_alat' => 'Nesting',
+                'harga' => 20000,
+                'id_kategori' => 2,
+                'gambar' => 'default_image.jpg',
+                'ukuran' => 'Besar',
+                'warna' => 'Silver',
+                'jumlah' => 30,
+                'deskripsi' => 'Full set untuk penyewaan, berbahan dasar titanium'
             ],
             [
-                'id_alat' => 15, 'nama_alat' => 'Tenda', 'harga' => 50000, 'id_kategori' => 3,
-                'gambar' => 'default_image.jpg', 'ukuran' => '2P', 'warna' => 'orange',
-                'jumlah' => 8, 'deskripsi' => ''
+                'id_alat' => 15,
+                'nama_alat' => 'Tenda',
+                'harga' => 50000,
+                'id_kategori' => 3,
+                'gambar' => 'default_image.jpg',
+                'ukuran' => '2P',
+                'warna' => 'orange',
+                'jumlah' => 8,
+                'deskripsi' => ''
             ],
             [
-                'id_alat' => 18, 'nama_alat' => 'Fly Sheet', 'harga' => 15000, 'id_kategori' => 3,
-                'gambar' => 'default_image.jpg', 'ukuran' => 'besar', 'warna' => 'hitam',
-                'jumlah' => 10, 'deskripsi' => "berbahan lembut dan hangat"
+                'id_alat' => 18,
+                'nama_alat' => 'Fly Sheet',
+                'harga' => 15000,
+                'id_kategori' => 3,
+                'gambar' => 'default_image.jpg',
+                'ukuran' => 'besar',
+                'warna' => 'hitam',
+                'jumlah' => 10,
+                'deskripsi' => "berbahan lembut dan hangat"
             ]
         ]);
 
         // users
         $this->db->table('users')->insertBatch([
             [
-                'id_user' => 1, 'username' => 'roy',
-                'password' => '$2y$10$rz5.lfE/RWE0arKXdRXPB.1vcAkmQVSzCk6ESMWYCelXb8ko2CO2G',
-                'nama_lengkap' => 'El Roy Tamba', 'role' => 'Pelanggan'
+                'id_user' => 1,
+                'username' => 'roy',
+                'password' => '$2y$10$UYFGzOMm0BAE0UVqzRW5CejUE7becCrz3hs6fnfZsou.VbChqVNIK',
+                'nama_lengkap' => 'El Roy Tamba',
+                'role' => 'Pelanggan'
             ],
             [
-                'id_user' => 6, 'username' => 'susilo',
-                'password' => '$2y$10$dottMRUzyl3LGFKoTLc5veJ0UZnuoKlXxDAPwSflBjQblbfuOO106',
-                'nama_lengkap' => 'Susilo Aditya Pratama', 'role' => 'Admin'
+                'id_user' => 6,
+                'username' => 'susilo',
+                'password' => '$2y$10$UYFGzOMm0BAE0UVqzRW5CejUE7becCrz3hs6fnfZsou.VbChqVNIK',
+                'nama_lengkap' => 'Susilo Aditya Pratama',
+                'role' => 'Admin'
             ],
             [
-                'id_user' => 8, 'username' => 'nashir',
-                'password' => '$2y$10$LDpAC/Xl4Astooj1G6lJxuiDlLmOWf/HSzJMbR45bpc1VuEZz0BzG',
-                'nama_lengkap' => 'nashirdesu', 'role' => 'Admin'
+                'id_user' => 8,
+                'username' => 'nashir',
+                'password' => '$2y$10$UYFGzOMm0BAE0UVqzRW5CejUE7becCrz3hs6fnfZsou.VbChqVNIK',
+                'nama_lengkap' => 'nashirdesu',
+                'role' => 'Admin'
             ],
             [
-                'id_user' => 10, 'username' => 'harlan',
-                'password' => '$2y$10$m/uTFx.VeFV24WbxFTq6zeIR.6khLfBorMGrbpw10p/xd0sIhq6oC',
-                'nama_lengkap' => 'harlan', 'role' => 'Admin'
+                'id_user' => 10,
+                'username' => 'harlan',
+                'password' => '$2y$10$UYFGzOMm0BAE0UVqzRW5CejUE7becCrz3hs6fnfZsou.VbChqVNIK',
+                'nama_lengkap' => 'harlan',
+                'role' => 'Admin'
             ]
         ]);
 
