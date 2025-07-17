@@ -11,13 +11,16 @@ use App\Models\PengembalianOrderModel;
 class TelegramController extends ResourceController
 {
     protected $format = 'json';
-    private $url = 'https://cb9ec94764ee.ngrok-free.app/telegram/webhook';
+    private $url = 'https://4d936da54601.ngrok-free.app/telegram/webhook';
     private $token = '7979273840:AAFr6W3bifNlQF5vkQSM0HUuiFy7au_cFnM';
     private $alatModel;
     private $orderModel;
     private $transaksiAlatModel;
     private $chatidAdminModel;
     private $pengembalianOrderModel;
+
+    // State untuk menyimpan informasi sementara selama interaksi
+    private $userStates = [];
 
     public function __construct()
     {
@@ -26,6 +29,19 @@ class TelegramController extends ResourceController
         $this->transaksiAlatModel = new TransaksiAlatModel();
         $this->chatidAdminModel = new Chatidadmin();
         $this->pengembalianOrderModel = new PengembalianOrderModel();
+
+        // Load user states from a persistent storage (e.g., file, database, or cache)
+        // For simplicity, we'll use a file here. In production, consider Redis or database.
+        $stateFile = WRITEPATH . 'telegram_user_states.json';
+        if (file_exists($stateFile)) {
+            $this->userStates = json_decode(file_get_contents($stateFile), true);
+        }
+    }
+
+    private function saveUserStates()
+    {
+        $stateFile = WRITEPATH . 'telegram_user_states.json';
+        file_put_contents($stateFile, json_encode($this->userStates));
     }
 
     public function index()
@@ -113,14 +129,25 @@ class TelegramController extends ResourceController
     private function handleCommands($chatId, $text)
     {
         $command = strtolower(trim($text));
-        if (preg_match('/^\/?sewa-(\d+)-(\d+)-(\d+)$/', $command, $matches)) {
-            $itemId = (int)$matches[1];
-            $quantity = (int)$matches[2];
-            $lamaPinjam = (int)$matches[3];
-            $this->handleConfirmOrder($chatId, $itemId, $quantity, $lamaPinjam);
-        } elseif ($command === '/selesaisewa') {
-            $this->handleSelesaiSewa($chatId);
+        $currentState = $this->userStates[$chatId]['state'] ?? null;
+        // if ($command === '/batal') {
+        //     $this->handleBatalPesanan($chatId);
+        //     $currentState == null; // Reset state jika ada
+        //     return; // Langsung return agar tidak lanjut ke state lainnya
+        // }
+
+        if ($currentState === 'awaiting_item_id') {
+            $this->processItemId($chatId, $command);
+        } elseif ($currentState === 'awaiting_quantity') {
+            $this->processQuantity($chatId, $command);
+        } elseif ($currentState === 'awaiting_duration') {
+            $this->processDuration($chatId, $command);
+        } elseif ($currentState === 'awaiting_return_order_id') {
+            $this->processReturnOrderId($chatId, $command);
+        } elseif ($currentState === 'awaiting_return_quantity') {
+            $this->processReturnQuantity($chatId, $command);
         } else {
+            // Normal command handling
             switch ($command) {
                 case '/sewa':
                     $this->handleSewa($chatId);
@@ -134,13 +161,27 @@ class TelegramController extends ResourceController
                 case '/pengembalian':
                     $this->handlePengembalian($chatId);
                     break;
+                case '/selesaisewa':
+                    $this->handleSelesaiSewa($chatId);
+                    break;
                 case '/start':
-                    $this->sendMessage($chatId, "Selamat datang! Gunakan perintah:\n- sewa: Untuk menyewa alat\n- lihatalat: Melihat daftar alat\n- transaksi: Melihat riwayat transaksi\n- pengembalian: Mengembalikan alat");
+                    $this->sendMessage($chatId, "Selamat datang! Gunakan perintah:\n- /sewa: Untuk menyewa alat\n- /lihatalat: Melihat daftar alat\n- /transaksi: Melihat riwayat transaksi\n- /selesaisewa: Mengembalikan alat");
                     break;
                 default:
                     $this->sendMessage($chatId, "Perintah tidak dikenali. Ketik /start untuk melihat menu.");
                     break;
             }
+        }
+        $this->saveUserStates();
+    }
+    private function handleBatalPesanan($chatId)
+    {
+        if (isset($this->userStates[$chatId])) {
+            unset($this->userStates[$chatId]);
+            file_put_contents('debug.log', "Pesanan dibatalkan oleh chat $chatId\n", FILE_APPEND);
+            $this->sendMessage($chatId, "✅ Proses pemesanan berhasil dibatalkan");
+        } else {
+            $this->sendMessage($chatId, "⚠️ Tidak ada pesanan yang sedang diproses");
         }
     }
 
@@ -157,13 +198,80 @@ class TelegramController extends ResourceController
         foreach ($alatTersedia as $alat) {
             $message .= "{$alat['id_alat']}. {$alat['nama_alat']} - Rp" . number_format($alat['harga'], 0, ',', '.') . "/hari (Tersedia: {$alat['jumlah']})\n";
         }
-        $message .= "\n📌 *Cara menyewa:*\n";
-        $message .= "Gunakan format `/sewa-{id_alat}-{jumlah}`\n";
-        $message .= "Contoh: `/sewa-1-2` untuk menyewa 2 unit alat dengan ID 1.\n";
-        $message .= "\n🛑 Untuk mengakhiri sewa, gunakan perintah /selesaisewa.";
+        $message .= "\nSilakan masukkan *ID alat* yang ingin Anda sewa:";
 
+        $this->userStates[$chatId] = ['state' => 'awaiting_item_id'];
         $this->sendMessage($chatId, $message);
     }
+
+    private function processItemId($chatId, $itemId)
+    {
+        if (!is_numeric($itemId)) {
+            $this->sendMessage($chatId, "ID alat harus berupa angka. Silakan masukkan kembali ID alat:");
+            return;
+        }
+
+        $alat = $this->alatModel->find((int)$itemId);
+        if (!$alat || $alat['jumlah'] <= 0) {
+            $this->sendMessage($chatId, "ID alat tidak valid atau stok habis. Silakan masukkan kembali ID alat yang tersedia:");
+            return;
+        }
+
+        $this->userStates[$chatId]['item_id'] = (int)$itemId;
+        $this->userStates[$chatId]['state'] = 'awaiting_quantity';
+        $this->sendMessage($chatId, "Anda memilih *{$alat['nama_alat']}*. Berapa *jumlah* yang ingin Anda sewa? (Tersedia: {$alat['jumlah']})");
+    }
+
+    private function processQuantity($chatId, $quantity)
+    {
+        if (!is_numeric($quantity) || (int)$quantity <= 0) {
+            $this->sendMessage($chatId, "Jumlah harus berupa angka positif. Silakan masukkan kembali jumlah:");
+            return;
+        }
+
+        $itemId = $this->userStates[$chatId]['item_id'];
+        $alat = $this->alatModel->find($itemId);
+
+        if ((int)$quantity > $alat['jumlah']) {
+            $this->sendMessage($chatId, "Jumlah yang diminta ($quantity) melebihi stok yang tersedia ({$alat['jumlah']}). Silakan masukkan kembali jumlah:");
+            return;
+        }
+
+        $this->userStates[$chatId]['quantity'] = (int)$quantity;
+        $this->userStates[$chatId]['state'] = 'awaiting_duration';
+        $this->sendMessage($chatId, "Berapa lama (dalam *hari*) Anda ingin menyewa alat ini?");
+    }
+
+    private function processDuration($chatId, $duration)
+    {
+        file_put_contents('debug.log', "Processing duration: $duration\n", FILE_APPEND);
+
+        if (!is_numeric($duration) || (int)$duration <= 0) {
+            $logMessage = "Invalid duration input from chat $chatId: '$duration'\n";
+            file_put_contents('error.log', $logMessage, FILE_APPEND);
+
+            $this->sendMessage($chatId, "⛔ Lama sewa harus berupa angka positif (dalam hari). Contoh: 3 untuk 3 hari.\nSilakan masukkan kembali lama sewa:");
+            return;
+        }
+
+        $duration = (int)$duration;
+        $this->userStates[$chatId]['duration'] = $duration;
+
+        file_put_contents('debug.log', "Valid duration received: $duration days from chat $chatId\n", FILE_APPEND);
+
+        // Process the order
+        $itemId = $this->userStates[$chatId]['item_id'];
+        $quantity = $this->userStates[$chatId]['quantity'];
+        $lamaPinjam = $duration;
+
+        $this->handleConfirmOrder($chatId, $itemId, $quantity, $lamaPinjam);
+
+        // Clear state after successful order
+        unset($this->userStates[$chatId]);
+        file_put_contents('debug.log', "Order processed successfully for chat $chatId\n", FILE_APPEND);
+    }
+
+
     private function getTelegramUsername($chatId)
     {
         $apiURL = "https://api.telegram.org/bot{$this->token}/getChat?chat_id={$chatId}";
@@ -181,16 +289,16 @@ class TelegramController extends ResourceController
     {
         helper('date');
 
-        // Cek apakah chat ID sudah tersimpan
+        $username = $this->getTelegramUsername($chatId);
+
         $chatModel = new \App\Models\Chatid();
         $existing = $chatModel->where('chatid', $chatId)->first();
-
         if (!$existing) {
-            $username = $this->getTelegramUsername($chatId);
-            $chatModel->insert([
+            $insertData = [
                 'chatid' => $chatId,
-                'username' => $username ?? null
-            ]);
+                'username' => $username ?: '(tanpa username)',
+            ];
+            $chatModel->insert($insertData);
         }
 
         // Ambil data alat + kategori
@@ -277,15 +385,116 @@ class TelegramController extends ResourceController
 
     public function handleSelesaiSewa($chatId)
     {
-        $orders = $this->orderModel->getOrdersByUser(session()->get('id_user'));
-        $message = "Berikut adalah pesanan Anda:\n";
+        // Get orders that are 'Pending' or 'Completed' but not yet fully returned
+        $ordersToReturn = $this->orderModel
+            ->select('orders.*, alat.nama_alat, kategori.nama_kategori')
+            ->join('alat', 'alat.id_alat = orders.id_alat')
+            ->join('kategori', 'alat.id_kategori = kategori.id_kategori')
+            ->where('orders.chatid', $chatId)
+            ->whereIn('orders.status', ['Pending', 'Completed']) // Include completed if not fully returned
+            ->findAll();
 
-        foreach ($orders as $order) {
-            $alat = $this->alatModel->find($order['id_alat']);
-            $message .= "Alat: {$alat['nama_alat']}, Jumlah: {$order['jumlah']}, Total: Rp" . number_format($order['total_harga'], 0, ',', '.') . "\n";
+        if (empty($ordersToReturn)) {
+            $this->sendMessage($chatId, "Anda tidak memiliki pesanan yang perlu dikembalikan.");
+            return;
         }
 
-        $this->sendMessage($chatId, $message);
+        $message = "Berikut adalah pesanan Anda yang bisa dikembalikan:\n\n";
+        foreach ($ordersToReturn as $order) {
+            // Check if there's any remaining quantity to return
+            $returnedQuantity = $this->pengembalianOrderModel->where('idorder', $order['id_order'])->selectSum('jumlahpengembalian')->first()['jumlahpengembalian'] ?? 0;
+            $remainingQuantity = $order['jumlah'] - $returnedQuantity;
+
+            if ($remainingQuantity > 0) {
+                $message .= "ID Order: *{$order['id_order']}*\n";
+                $message .= "Alat: {$order['nama_alat']}\n";
+                $message .= "Jumlah Disewa: {$order['jumlah']}\n";
+                $message .= "Jumlah Sudah Dikembalikan: {$returnedQuantity}\n";
+                $message .= "Jumlah Belum Dikembalikan: *{$remainingQuantity}*\n";
+                $message .= "Status: {$order['status']}\n\n";
+            }
+        }
+
+        if (strpos($message, "ID Order:") === false) {
+            $this->sendMessage($chatId, "Anda tidak memiliki pesanan yang perlu dikembalikan.");
+            return;
+        }
+
+        $this->userStates[$chatId] = ['state' => 'awaiting_return_order_id'];
+        $this->sendMessage($chatId, $message . "Silakan masukkan *ID Order* yang ingin Anda kembalikan:");
+    }
+
+    private function processReturnOrderId($chatId, $orderId)
+    {
+        if (!is_numeric($orderId)) {
+            $this->sendMessage($chatId, "ID Order harus berupa angka. Silakan masukkan kembali ID Order:");
+            return;
+        }
+
+        $order = $this->orderModel->where('id_order', (int)$orderId)
+            ->where('chatid', $chatId)
+            ->whereIn('status', ['Pending', 'Completed'])
+            ->first();
+
+        if (!$order) {
+            $this->sendMessage($chatId, "ID Order tidak valid atau bukan milik Anda. Silakan masukkan kembali ID Order:");
+            return;
+        }
+
+        $returnedQuantity = $this->pengembalianOrderModel->where('idorder', $order['id_order'])->selectSum('jumlahpengembalian')->first()['jumlahpengembalian'] ?? 0;
+        $remainingQuantity = $order['jumlah'] - $returnedQuantity;
+
+        if ($remainingQuantity <= 0) {
+            $this->sendMessage($chatId, "Pesanan ini sudah sepenuhnya dikembalikan. Silakan pilih ID Order lain:");
+            return;
+        }
+
+        $this->userStates[$chatId]['return_order_id'] = (int)$orderId;
+        $this->userStates[$chatId]['state'] = 'awaiting_return_quantity';
+        $this->sendMessage($chatId, "Anda memilih Order ID *{$order['id_order']}* (Alat: {$order['nama_alat']}). Berapa *jumlah* yang ingin Anda kembalikan? (Sisa: {$remainingQuantity})");
+    }
+
+    private function processReturnQuantity($chatId, $returnQuantity)
+    {
+        if (!is_numeric($returnQuantity) || (int)$returnQuantity <= 0) {
+            $this->sendMessage($chatId, "Jumlah pengembalian harus berupa angka positif. Silakan masukkan kembali jumlah:");
+            return;
+        }
+
+        $orderId = $this->userStates[$chatId]['return_order_id'];
+        $order = $this->orderModel->find($orderId);
+
+        $returnedQuantity = $this->pengembalianOrderModel->where('idorder', $order['id_order'])->selectSum('jumlahpengembalian')->first()['jumlahpengembalian'] ?? 0;
+        $remainingQuantity = $order['jumlah'] - $returnedQuantity;
+
+        if ((int)$returnQuantity > $remainingQuantity) {
+            $this->sendMessage($chatId, "Jumlah pengembalian ($returnQuantity) melebihi sisa yang belum dikembalikan ({$remainingQuantity}). Silakan masukkan kembali jumlah:");
+            return;
+        }
+
+        // Process the return
+        $this->pengembalianOrderModel->insert([
+            'idorder' => $orderId,
+            'jumlahpengembalian' => (int)$returnQuantity,
+        ]);
+
+        // Update alat stock
+        $alat = $this->alatModel->find($order['id_alat']);
+        $this->alatModel->update($order['id_alat'], [
+            'jumlah' => $alat['jumlah'] + (int)$returnQuantity
+        ]);
+
+        // Check if all items are returned for this order
+        $totalReturned = $this->pengembalianOrderModel->where('idorder', $orderId)->selectSum('jumlahpengembalian')->first()['jumlahpengembalian'] ?? 0;
+        if ($totalReturned >= $order['jumlah']) {
+            $this->orderModel->update($orderId, ['status' => 'Returned']);
+            $this->sendMessage($chatId, "✅ Semua alat untuk Order ID *{$orderId}* telah berhasil dikembalikan.");
+        } else {
+            $this->sendMessage($chatId, "✅ *" . $returnQuantity . "* alat untuk Order ID *" . $orderId . "* berhasil dikembalikan. Sisa *" . ((int)$remainingQuantity - (int)$returnQuantity) . "* alat belum dikembalikan.");
+        }
+
+        // Clear state after successful return
+        unset($this->userStates[$chatId]);
     }
 
 
@@ -322,14 +531,14 @@ class TelegramController extends ResourceController
 
         $message = "📦 Riwayat Pemesanan Anda:\n";
         foreach ($orders as $order) {
-            $message .= "🆔 ID Order: {$order['id_order']}\n";
+            $message .= "🆔 ID Order: *{$order['id_order']}*\n";
             $message .= "🛠️ Alat: {$order['nama_alat']}\n";
             $message .= "🛠️ Kategori: {$order['nama_kategori']}\n";
             $message .= "🔢 Jumlah: {$order['jumlah']}\n";
             $message .= "💰 Total: Rp" . number_format($order['total_harga'], 0, ',', '.') . "\n";
             $message .= "📅 Tgl Pesan: {$order['tanggal_pesan']}\n";
             $message .= "📅 Tgl Kembali: {$order['tanggal_pengembalian']}\n";
-            $message .= "📌 Status: {$order['status']}\n\n";
+            $message .= "📌 Status: *{$order['status']}*\n\n";
         }
 
         $this->sendMessage($chatId, $message);
@@ -353,7 +562,7 @@ class TelegramController extends ResourceController
 
         $message = "📥 Daftar Pengembalian Anda:\n\n";
         foreach ($returns as $ret) {
-            $message .= "🆔 Order: #{$ret['id_order']}\n";
+            $message .= "🆔 Order: *#{$ret['id_order']}*\n";
             $message .= "📦 Alat: {$ret['nama_alat']}\n";
             $message .= "🔢 Jumlah Dikembalikan: {$ret['jumlahpengembalian']} / {$ret['total_pesan']}\n";
             $message .= "📅 Dipesan: " . date('d F Y', strtotime($ret['tanggal_pesan'])) . "\n";
@@ -370,7 +579,7 @@ class TelegramController extends ResourceController
         $data = [
             'chat_id' => $chatId,
             'text' => $message,
-            'parse_mode' => 'HTML'
+            'parse_mode' => 'HTML' // Use HTML for bold text
         ];
 
         $options = [
